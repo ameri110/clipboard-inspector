@@ -425,15 +425,15 @@ function ClipboardEditor({ entries, setEntries }) {
 		setEntries([...entries, { type: 'text/plain', data: '', web: false }]);
 	const remove = idx => setEntries(entries.filter((_, i) => i !== idx));
 
-	const write = async () => {
+	// Modern path: navigator.clipboard.write() with a ClipboardItem. Supports
+	// binary (images) but only writes the browser's allow-list of types; custom
+	// types must be registered as a "web custom format" ("web " prefix).
+	const writeAsync = async () => {
 		try {
 			const payload = {};
 			for (const entry of entries) {
 				const type = entry.type.trim();
 				if (!type) continue;
-				// Non-standard types are only accepted by clipboard.write() when
-				// registered as a "web custom format", i.e. prefixed with "web ".
-				// The Blob itself keeps the bare MIME type either way.
 				const key = entry.web ? `web ${type}` : type;
 				payload[key] = new Blob([entry.data], { type });
 			}
@@ -446,10 +446,48 @@ function ClipboardEditor({ entries, setEntries }) {
 				ok: true,
 				msg: `Wrote ${
 					Object.keys(payload).length
-				} type(s) to the clipboard. Paste above to verify.`
+				} type(s) via ClipboardItem. Paste above to verify.`
 			});
 		} catch (err) {
 			setStatus({ ok: false, msg: String(err) });
+		}
+	};
+
+	// Legacy path: a copy-event handler + document.execCommand('copy'). Text
+	// only, but DataTransfer.setData() writes ANY MIME type verbatim — no
+	// allow-list. This is how apps like Canva/Figma/Google Docs put custom
+	// formats (e.g. application/x-canva) on the clipboard.
+	const writeLegacy = () => {
+		const typed = entries.filter(e => e.type.trim());
+		if (!typed.length) {
+			setStatus({ ok: false, msg: 'Add at least one typed entry.' });
+			return;
+		}
+		let handled = false;
+		const onCopy = e => {
+			handled = true;
+			e.preventDefault();
+			for (const entry of typed) {
+				e.clipboardData.setData(entry.type.trim(), entry.data);
+			}
+		};
+		document.addEventListener('copy', onCopy);
+		let ok = false;
+		try {
+			ok = document.execCommand('copy');
+		} finally {
+			document.removeEventListener('copy', onCopy);
+		}
+		if (ok && handled) {
+			setStatus({
+				ok: true,
+				msg: `Wrote ${typed.length} type(s) verbatim via the copy event. Paste above to verify.`
+			});
+		} else {
+			setStatus({
+				ok: false,
+				msg: 'document.execCommand("copy") was blocked — try clicking the button again.'
+			});
 		}
 	};
 
@@ -457,27 +495,43 @@ function ClipboardEditor({ entries, setEntries }) {
 		<div className="clipboard-section clipboard-editor">
 			<h2>Edit &amp; write the clipboard</h2>
 			<p>
-				Add one entry per MIME type, then write them together as a
-				single{' '}
-				<a className="mdn" href={`${MDN_BASE}/ClipboardItem`}>
-					ClipboardItem
-				</a>
-				. Each type is preserved exactly. Browsers only allow a limited
-				set of standard types (e.g. <code>text/plain</code>,{' '}
-				<code>text/html</code>, <code>image/png</code>) to be written
-				directly. For anything else (e.g.{' '}
-				<code>application/x-canva</code>), tick{' '}
-				<strong>web custom format</strong> — the type is registered with
-				a <code>web </code> prefix per the{' '}
-				<a
-					className="mdn"
-					href="https://developer.mozilla.org/en-US/docs/Web/API/ClipboardItem#using_unsanitized_html_and_custom_clipboard_data"
-				>
-					Clipboard spec
-				</a>
-				, which only other web apps can read back (native apps won't see
-				it). Otherwise the write reports an error below.
+				Add one entry per MIME type. There are two ways to write them:
 			</p>
+			<ul>
+				<li>
+					<strong>ClipboardItem</strong> (
+					<a className="mdn" href={`${MDN_BASE}/Clipboard/write`}>
+						clipboard.write()
+					</a>
+					) — modern, supports images, but the browser only allows a
+					fixed allow-list of types (<code>text/plain</code>,{' '}
+					<code>text/html</code>, <code>image/png</code>, …).
+					Arbitrary types like <code>application/x-canva</code> are
+					rejected unless you tick <strong>web custom format</strong>,
+					which registers them with a <code>web </code> prefix that
+					only other web apps reading the same prefix can see.
+				</li>
+				<li>
+					<strong>Copy event</strong> (
+					<a
+						className="mdn"
+						href={`${MDN_BASE}/Document/execCommand`}
+					>
+						execCommand('copy')
+					</a>{' '}
+					+{' '}
+					<a
+						className="mdn"
+						href={`${MDN_BASE}/DataTransfer/setData`}
+					>
+						setData()
+					</a>
+					) — the legacy path, text only, but writes <em>any</em> MIME
+					type verbatim. This is how Canva, Figma and Google Docs put
+					custom formats on the clipboard, so use this for app
+					interop.
+				</li>
+			</ul>
 
 			<datalist id="common-mime-types">
 				{COMMON_TYPES.map(t => (
@@ -554,13 +608,21 @@ function ClipboardEditor({ entries, setEntries }) {
 				<button type="button" onClick={add}>
 					+ Add type
 				</button>{' '}
-				<button type="button" onClick={write} disabled={!can_write}>
-					Write to clipboard
+				<button
+					type="button"
+					onClick={writeAsync}
+					disabled={!can_write}
+				>
+					Write via ClipboardItem
+				</button>{' '}
+				<button type="button" onClick={writeLegacy}>
+					Write via copy event (any type)
 				</button>
 				{!can_write && (
 					<span className="anno">
 						This browser doesn't support{' '}
-						<code>navigator.clipboard.write()</code>.
+						<code>navigator.clipboard.write()</code> — use the
+						copy-event button.
 					</span>
 				)}
 			</p>

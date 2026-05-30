@@ -10836,7 +10836,7 @@
 				{ type: 'text/plain', data: '', web: false }
 			]);
 		const remove = idx => setEntries(entries.filter((_, i) => i !== idx));
-		const write = async () => {
+		const writeAsync = async () => {
 			try {
 				const payload = {};
 				for (const entry of entries) {
@@ -10857,10 +10857,43 @@
 					ok: true,
 					msg: `Wrote ${
 						Object.keys(payload).length
-					} type(s) to the clipboard. Paste above to verify.`
+					} type(s) via ClipboardItem. Paste above to verify.`
 				});
 			} catch (err) {
 				setStatus({ ok: false, msg: String(err) });
+			}
+		};
+		const writeLegacy = () => {
+			const typed = entries.filter(e => e.type.trim());
+			if (!typed.length) {
+				setStatus({ ok: false, msg: 'Add at least one typed entry.' });
+				return;
+			}
+			let handled = false;
+			const onCopy = e => {
+				handled = true;
+				e.preventDefault();
+				for (const entry of typed) {
+					e.clipboardData.setData(entry.type.trim(), entry.data);
+				}
+			};
+			document.addEventListener('copy', onCopy);
+			let ok = false;
+			try {
+				ok = document.execCommand('copy');
+			} finally {
+				document.removeEventListener('copy', onCopy);
+			}
+			if (ok && handled) {
+				setStatus({
+					ok: true,
+					msg: `Wrote ${typed.length} type(s) verbatim via the copy event. Paste above to verify.`
+				});
+			} else {
+				setStatus({
+					ok: false,
+					msg: 'document.execCommand("copy") was blocked \u2014 try clicking the button again.'
+				});
 			}
 		};
 		return /* @__PURE__ */ import_react.default.createElement(
@@ -10874,63 +10907,103 @@
 			/* @__PURE__ */ import_react.default.createElement(
 				'p',
 				null,
-				'Add one entry per MIME type, then write them together as a single',
-				' ',
+				'Add one entry per MIME type. There are two ways to write them:'
+			),
+			/* @__PURE__ */ import_react.default.createElement(
+				'ul',
+				null,
 				/* @__PURE__ */ import_react.default.createElement(
-					'a',
-					{ className: 'mdn', href: `${MDN_BASE}/ClipboardItem` },
-					'ClipboardItem'
-				),
-				'. Each type is preserved exactly. Browsers only allow a limited set of standard types (e.g. ',
-				/* @__PURE__ */ import_react.default.createElement(
-					'code',
+					'li',
 					null,
-					'text/plain'
+					/* @__PURE__ */ import_react.default.createElement(
+						'strong',
+						null,
+						'ClipboardItem'
+					),
+					' (',
+					/* @__PURE__ */ import_react.default.createElement(
+						'a',
+						{
+							className: 'mdn',
+							href: `${MDN_BASE}/Clipboard/write`
+						},
+						'clipboard.write()'
+					),
+					') \u2014 modern, supports images, but the browser only allows a fixed allow-list of types (',
+					/* @__PURE__ */ import_react.default.createElement(
+						'code',
+						null,
+						'text/plain'
+					),
+					',',
+					' ',
+					/* @__PURE__ */ import_react.default.createElement(
+						'code',
+						null,
+						'text/html'
+					),
+					', ',
+					/* @__PURE__ */ import_react.default.createElement(
+						'code',
+						null,
+						'image/png'
+					),
+					', \u2026). Arbitrary types like ',
+					/* @__PURE__ */ import_react.default.createElement(
+						'code',
+						null,
+						'application/x-canva'
+					),
+					' are rejected unless you tick ',
+					/* @__PURE__ */ import_react.default.createElement(
+						'strong',
+						null,
+						'web custom format'
+					),
+					', which registers them with a ',
+					/* @__PURE__ */ import_react.default.createElement(
+						'code',
+						null,
+						'web '
+					),
+					' prefix that only other web apps reading the same prefix can see.'
 				),
-				',',
-				' ',
 				/* @__PURE__ */ import_react.default.createElement(
-					'code',
+					'li',
 					null,
-					'text/html'
-				),
-				', ',
-				/* @__PURE__ */ import_react.default.createElement(
-					'code',
-					null,
-					'image/png'
-				),
-				') to be written directly. For anything else (e.g.',
-				' ',
-				/* @__PURE__ */ import_react.default.createElement(
-					'code',
-					null,
-					'application/x-canva'
-				),
-				'), tick',
-				' ',
-				/* @__PURE__ */ import_react.default.createElement(
-					'strong',
-					null,
-					'web custom format'
-				),
-				' \u2014 the type is registered with a ',
-				/* @__PURE__ */ import_react.default.createElement(
-					'code',
-					null,
-					'web '
-				),
-				' prefix per the',
-				' ',
-				/* @__PURE__ */ import_react.default.createElement(
-					'a',
-					{
-						className: 'mdn',
-						href: 'https://developer.mozilla.org/en-US/docs/Web/API/ClipboardItem#using_unsanitized_html_and_custom_clipboard_data'
-					},
-					'Clipboard spec'
-				),
-				", which only other web apps can read back (native apps won't see it). Otherwise the write reports an error below."
+					/* @__PURE__ */ import_react.default.createElement(
+						'strong',
+						null,
+						'Copy event'
+					),
+					' (',
+					/* @__PURE__ */ import_react.default.createElement(
+						'a',
+						{
+							className: 'mdn',
+							href: `${MDN_BASE}/Document/execCommand`
+						},
+						"execCommand('copy')"
+					),
+					' ',
+					'+',
+					' ',
+					/* @__PURE__ */ import_react.default.createElement(
+						'a',
+						{
+							className: 'mdn',
+							href: `${MDN_BASE}/DataTransfer/setData`
+						},
+						'setData()'
+					),
+					') \u2014 the legacy path, text only, but writes ',
+					/* @__PURE__ */ import_react.default.createElement(
+						'em',
+						null,
+						'any'
+					),
+					' MIME type verbatim. This is how Canva, Figma and Google Docs put custom formats on the clipboard, so use this for app interop.'
+				)
 			),
 			/* @__PURE__ */ import_react.default.createElement(
 				'datalist',
@@ -11068,8 +11141,18 @@
 				' ',
 				/* @__PURE__ */ import_react.default.createElement(
 					'button',
-					{ type: 'button', onClick: write, disabled: !can_write },
-					'Write to clipboard'
+					{
+						type: 'button',
+						onClick: writeAsync,
+						disabled: !can_write
+					},
+					'Write via ClipboardItem'
+				),
+				' ',
+				/* @__PURE__ */ import_react.default.createElement(
+					'button',
+					{ type: 'button', onClick: writeLegacy },
+					'Write via copy event (any type)'
 				),
 				!can_write &&
 					/* @__PURE__ */ import_react.default.createElement(
@@ -11082,7 +11165,7 @@
 							null,
 							'navigator.clipboard.write()'
 						),
-						'.'
+						' \u2014 use the copy-event button.'
 					)
 			),
 			status &&
