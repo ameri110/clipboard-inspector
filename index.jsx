@@ -1,4 +1,4 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import ReactDOM from 'react-dom';
 
 const MDN_BASE = `https://developer.mozilla.org/en-US/docs/Web/API`;
@@ -86,14 +86,15 @@ async function extractData(data) {
 }
 
 function ClipboardInspector(props) {
-	const { data, label } = props;
+	const { data, label, onReadClipboard, onEdit, onClear } = props;
 	const has_async_clipboard =
 		!navigator.clipboard || !navigator.clipboard.read;
-	const paste = useCallback(e => {
-		navigator.clipboard.read().then(data => {
-			render(data, 'ClipboardItems');
-		});
-	}, []);
+	const paste = useCallback(
+		e => {
+			onReadClipboard();
+		},
+		[onReadClipboard]
+	);
 
 	const autoselect = useCallback(e => {
 		const range = document.createRange();
@@ -174,11 +175,14 @@ function ClipboardInspector(props) {
 
 	return (
 		<div>
-			<button type="button" onClick={e => render()}>
+			<button type="button" onClick={e => onClear()}>
 				← Go back
 			</button>
 			{data.map((render_data, idx) => {
 				const URLS = MDN_URLS[render_data.type];
+				const editable = (render_data.types || []).filter(
+					t => typeof t.data === 'string'
+				);
 				return (
 					<div className="clipboard-summary" key={idx}>
 						<h2>
@@ -190,6 +194,18 @@ function ClipboardInspector(props) {
 							</a>{' '}
 							contains:
 						</h2>
+
+						{editable.length > 0 && (
+							<p>
+								<button
+									type="button"
+									onClick={e => onEdit(editable)}
+								>
+									✎ Load {editable.length} text type(s) into
+									the editor
+								</button>
+							</p>
+						)}
 
 						{render_data.types && (
 							<div className="clipboard-section">
@@ -382,31 +398,252 @@ function ClipboardInspector(props) {
 	);
 }
 
-var app_el = document.getElementById('app');
+// Common MIME types offered as suggestions in the editor's type field.
+const COMMON_TYPES = [
+	'text/plain',
+	'text/html',
+	'text/uri-list',
+	'image/svg+xml',
+	'application/json'
+];
 
-async function render(data, label) {
-	const extracted_data = data
-		? await Promise.all(
-				(Array.isArray(data) ? data : [data]).map(extractData)
-		  )
-		: [];
-	ReactDOM.render(
-		<ClipboardInspector data={extracted_data} label={label} />,
-		app_el
+function ClipboardEditor({ entries, setEntries }) {
+	const [status, setStatus] = useState(null);
+
+	const can_write =
+		typeof ClipboardItem !== 'undefined' &&
+		navigator.clipboard &&
+		navigator.clipboard.write;
+
+	const update = (idx, patch) =>
+		setEntries(
+			entries.map((entry, i) =>
+				i === idx ? { ...entry, ...patch } : entry
+			)
+		);
+	const add = () =>
+		setEntries([...entries, { type: 'text/plain', data: '', web: false }]);
+	const remove = idx => setEntries(entries.filter((_, i) => i !== idx));
+
+	const write = async () => {
+		try {
+			const payload = {};
+			for (const entry of entries) {
+				const type = entry.type.trim();
+				if (!type) continue;
+				// Non-standard types are only accepted by clipboard.write() when
+				// registered as a "web custom format", i.e. prefixed with "web ".
+				// The Blob itself keeps the bare MIME type either way.
+				const key = entry.web ? `web ${type}` : type;
+				payload[key] = new Blob([entry.data], { type });
+			}
+			if (!Object.keys(payload).length) {
+				setStatus({ ok: false, msg: 'Add at least one typed entry.' });
+				return;
+			}
+			await navigator.clipboard.write([new ClipboardItem(payload)]);
+			setStatus({
+				ok: true,
+				msg: `Wrote ${
+					Object.keys(payload).length
+				} type(s) to the clipboard. Paste above to verify.`
+			});
+		} catch (err) {
+			setStatus({ ok: false, msg: String(err) });
+		}
+	};
+
+	return (
+		<div className="clipboard-section clipboard-editor">
+			<h2>Edit &amp; write the clipboard</h2>
+			<p>
+				Add one entry per MIME type, then write them together as a
+				single{' '}
+				<a className="mdn" href={`${MDN_BASE}/ClipboardItem`}>
+					ClipboardItem
+				</a>
+				. Each type is preserved exactly. Browsers only allow a limited
+				set of standard types (e.g. <code>text/plain</code>,{' '}
+				<code>text/html</code>, <code>image/png</code>) to be written
+				directly. For anything else (e.g.{' '}
+				<code>application/x-canva</code>), tick{' '}
+				<strong>web custom format</strong> — the type is registered with
+				a <code>web </code> prefix per the{' '}
+				<a
+					className="mdn"
+					href="https://developer.mozilla.org/en-US/docs/Web/API/ClipboardItem#using_unsanitized_html_and_custom_clipboard_data"
+				>
+					Clipboard spec
+				</a>
+				, which only other web apps can read back (native apps won't see
+				it). Otherwise the write reports an error below.
+			</p>
+
+			<datalist id="common-mime-types">
+				{COMMON_TYPES.map(t => (
+					<option key={t} value={t} />
+				))}
+			</datalist>
+
+			<table>
+				<thead>
+					<tr>
+						<th>type</th>
+						<th>web custom format</th>
+						<th>data</th>
+						<th />
+					</tr>
+				</thead>
+				<tbody>
+					{entries.map((entry, idx) => (
+						<tr key={idx}>
+							<td>
+								<input
+									type="text"
+									list="common-mime-types"
+									value={entry.type}
+									placeholder="text/plain"
+									onChange={e =>
+										update(idx, { type: e.target.value })
+									}
+								/>
+							</td>
+							<td className="cb-web-cell">
+								<label>
+									<input
+										type="checkbox"
+										checked={!!entry.web}
+										onChange={e =>
+											update(idx, {
+												web: e.target.checked
+											})
+										}
+									/>{' '}
+									{entry.web ? (
+										<code>web {entry.type.trim()}</code>
+									) : (
+										'standard'
+									)}
+								</label>
+							</td>
+							<td>
+								<textarea
+									className="cb-editor-data"
+									rows={3}
+									value={entry.data}
+									onChange={e =>
+										update(idx, { data: e.target.value })
+									}
+								/>
+							</td>
+							<td>
+								<button
+									type="button"
+									onClick={e => remove(idx)}
+									disabled={entries.length === 1}
+								>
+									✕
+								</button>
+							</td>
+						</tr>
+					))}
+				</tbody>
+			</table>
+
+			<p>
+				<button type="button" onClick={add}>
+					+ Add type
+				</button>{' '}
+				<button type="button" onClick={write} disabled={!can_write}>
+					Write to clipboard
+				</button>
+				{!can_write && (
+					<span className="anno">
+						This browser doesn't support{' '}
+						<code>navigator.clipboard.write()</code>.
+					</span>
+				)}
+			</p>
+
+			{status && (
+				<p className={status.ok ? 'editor-ok' : 'editor-err'}>
+					{status.msg}
+				</p>
+			)}
+		</div>
 	);
 }
 
-render();
+function App() {
+	const [data, setData] = useState([]);
+	const [label, setLabel] = useState(null);
+	const [entries, setEntries] = useState([
+		{ type: 'text/plain', data: '', web: false }
+	]);
 
-document.addEventListener('paste', e => {
-	render(e.clipboardData, 'clipboardData');
-});
+	const show = useCallback(async (payload, lbl) => {
+		const extracted = payload
+			? await Promise.all(
+					(Array.isArray(payload) ? payload : [payload]).map(
+						extractData
+					)
+			  )
+			: [];
+		setData(extracted);
+		setLabel(lbl);
+	}, []);
 
-document.addEventListener('dragover', e => {
-	e.preventDefault();
-});
+	const readClipboard = useCallback(() => {
+		navigator.clipboard.read().then(items => {
+			show(items, 'ClipboardItems');
+		});
+	}, [show]);
 
-document.addEventListener('drop', e => {
-	render(e.dataTransfer, 'dataTransfer');
-	e.preventDefault();
-});
+	const loadIntoEditor = useCallback(types => {
+		setEntries(
+			types.length
+				? types.map(t => ({ type: t.type, data: t.data, web: false }))
+				: [{ type: 'text/plain', data: '', web: false }]
+		);
+		document
+			.querySelector('.clipboard-editor')
+			?.scrollIntoView({ behavior: 'smooth' });
+	}, []);
+
+	const clear = useCallback(() => {
+		setData([]);
+		setLabel(null);
+	}, []);
+
+	useEffect(() => {
+		const on_paste = e => show(e.clipboardData, 'clipboardData');
+		const on_dragover = e => e.preventDefault();
+		const on_drop = e => {
+			show(e.dataTransfer, 'dataTransfer');
+			e.preventDefault();
+		};
+		document.addEventListener('paste', on_paste);
+		document.addEventListener('dragover', on_dragover);
+		document.addEventListener('drop', on_drop);
+		return () => {
+			document.removeEventListener('paste', on_paste);
+			document.removeEventListener('dragover', on_dragover);
+			document.removeEventListener('drop', on_drop);
+		};
+	}, [show]);
+
+	return (
+		<div>
+			<ClipboardInspector
+				data={data}
+				label={label}
+				onReadClipboard={readClipboard}
+				onEdit={loadIntoEditor}
+				onClear={clear}
+			/>
+			<ClipboardEditor entries={entries} setEntries={setEntries} />
+		</div>
+	);
+}
+
+ReactDOM.render(<App />, document.getElementById('app'));

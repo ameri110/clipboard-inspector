@@ -10314,14 +10314,15 @@
 		return void 0;
 	}
 	function ClipboardInspector(props) {
-		const { data, label } = props;
+		const { data, label, onReadClipboard, onEdit, onClear } = props;
 		const has_async_clipboard =
 			!navigator.clipboard || !navigator.clipboard.read;
-		const paste = (0, import_react.useCallback)(e => {
-			navigator.clipboard.read().then(data2 => {
-				render(data2, 'ClipboardItems');
-			});
-		}, []);
+		const paste = (0, import_react.useCallback)(
+			e => {
+				onReadClipboard();
+			},
+			[onReadClipboard]
+		);
 		const autoselect = (0, import_react.useCallback)(e => {
 			const range = document.createRange();
 			range.selectNodeContents(e.target);
@@ -10489,11 +10490,14 @@
 			null,
 			/* @__PURE__ */ import_react.default.createElement(
 				'button',
-				{ type: 'button', onClick: e => render() },
+				{ type: 'button', onClick: e => onClear() },
 				'\u2190 Go back'
 			),
 			data.map((render_data, idx) => {
 				const URLS = MDN_URLS[render_data.type];
+				const editable = (render_data.types || []).filter(
+					t => typeof t.data === 'string'
+				);
 				return /* @__PURE__ */ import_react.default.createElement(
 					'div',
 					{ className: 'clipboard-summary', key: idx },
@@ -10511,6 +10515,21 @@
 						' ',
 						'contains:'
 					),
+					editable.length > 0 &&
+						/* @__PURE__ */ import_react.default.createElement(
+							'p',
+							null,
+							/* @__PURE__ */ import_react.default.createElement(
+								'button',
+								{
+									type: 'button',
+									onClick: e => onEdit(editable)
+								},
+								'\u270E Load ',
+								editable.length,
+								' text type(s) into the editor'
+							)
+						),
 					render_data.types &&
 						/* @__PURE__ */ import_react.default.createElement(
 							'div',
@@ -10792,32 +10811,367 @@
 			})
 		);
 	}
-	var app_el = document.getElementById('app');
-	async function render(data, label) {
-		const extracted_data = data
-			? await Promise.all(
-					(Array.isArray(data) ? data : [data]).map(extractData)
-			  )
-			: [];
-		import_react_dom.default.render(
+	var COMMON_TYPES = [
+		'text/plain',
+		'text/html',
+		'text/uri-list',
+		'image/svg+xml',
+		'application/json'
+	];
+	function ClipboardEditor({ entries, setEntries }) {
+		const [status, setStatus] = (0, import_react.useState)(null);
+		const can_write =
+			typeof ClipboardItem !== 'undefined' &&
+			navigator.clipboard &&
+			navigator.clipboard.write;
+		const update = (idx, patch) =>
+			setEntries(
+				entries.map((entry, i) =>
+					i === idx ? { ...entry, ...patch } : entry
+				)
+			);
+		const add = () =>
+			setEntries([
+				...entries,
+				{ type: 'text/plain', data: '', web: false }
+			]);
+		const remove = idx => setEntries(entries.filter((_, i) => i !== idx));
+		const write = async () => {
+			try {
+				const payload = {};
+				for (const entry of entries) {
+					const type = entry.type.trim();
+					if (!type) continue;
+					const key = entry.web ? `web ${type}` : type;
+					payload[key] = new Blob([entry.data], { type });
+				}
+				if (!Object.keys(payload).length) {
+					setStatus({
+						ok: false,
+						msg: 'Add at least one typed entry.'
+					});
+					return;
+				}
+				await navigator.clipboard.write([new ClipboardItem(payload)]);
+				setStatus({
+					ok: true,
+					msg: `Wrote ${
+						Object.keys(payload).length
+					} type(s) to the clipboard. Paste above to verify.`
+				});
+			} catch (err) {
+				setStatus({ ok: false, msg: String(err) });
+			}
+		};
+		return /* @__PURE__ */ import_react.default.createElement(
+			'div',
+			{ className: 'clipboard-section clipboard-editor' },
 			/* @__PURE__ */ import_react.default.createElement(
-				ClipboardInspector,
-				{ data: extracted_data, label }
+				'h2',
+				null,
+				'Edit & write the clipboard'
 			),
-			app_el
+			/* @__PURE__ */ import_react.default.createElement(
+				'p',
+				null,
+				'Add one entry per MIME type, then write them together as a single',
+				' ',
+				/* @__PURE__ */ import_react.default.createElement(
+					'a',
+					{ className: 'mdn', href: `${MDN_BASE}/ClipboardItem` },
+					'ClipboardItem'
+				),
+				'. Each type is preserved exactly. Browsers only allow a limited set of standard types (e.g. ',
+				/* @__PURE__ */ import_react.default.createElement(
+					'code',
+					null,
+					'text/plain'
+				),
+				',',
+				' ',
+				/* @__PURE__ */ import_react.default.createElement(
+					'code',
+					null,
+					'text/html'
+				),
+				', ',
+				/* @__PURE__ */ import_react.default.createElement(
+					'code',
+					null,
+					'image/png'
+				),
+				') to be written directly. For anything else (e.g.',
+				' ',
+				/* @__PURE__ */ import_react.default.createElement(
+					'code',
+					null,
+					'application/x-canva'
+				),
+				'), tick',
+				' ',
+				/* @__PURE__ */ import_react.default.createElement(
+					'strong',
+					null,
+					'web custom format'
+				),
+				' \u2014 the type is registered with a ',
+				/* @__PURE__ */ import_react.default.createElement(
+					'code',
+					null,
+					'web '
+				),
+				' prefix per the',
+				' ',
+				/* @__PURE__ */ import_react.default.createElement(
+					'a',
+					{
+						className: 'mdn',
+						href: 'https://developer.mozilla.org/en-US/docs/Web/API/ClipboardItem#using_unsanitized_html_and_custom_clipboard_data'
+					},
+					'Clipboard spec'
+				),
+				", which only other web apps can read back (native apps won't see it). Otherwise the write reports an error below."
+			),
+			/* @__PURE__ */ import_react.default.createElement(
+				'datalist',
+				{ id: 'common-mime-types' },
+				COMMON_TYPES.map(t =>
+					/* @__PURE__ */ import_react.default.createElement(
+						'option',
+						{ key: t, value: t }
+					)
+				)
+			),
+			/* @__PURE__ */ import_react.default.createElement(
+				'table',
+				null,
+				/* @__PURE__ */ import_react.default.createElement(
+					'thead',
+					null,
+					/* @__PURE__ */ import_react.default.createElement(
+						'tr',
+						null,
+						/* @__PURE__ */ import_react.default.createElement(
+							'th',
+							null,
+							'type'
+						),
+						/* @__PURE__ */ import_react.default.createElement(
+							'th',
+							null,
+							'web custom format'
+						),
+						/* @__PURE__ */ import_react.default.createElement(
+							'th',
+							null,
+							'data'
+						),
+						/* @__PURE__ */ import_react.default.createElement(
+							'th',
+							null
+						)
+					)
+				),
+				/* @__PURE__ */ import_react.default.createElement(
+					'tbody',
+					null,
+					entries.map((entry, idx) =>
+						/* @__PURE__ */ import_react.default.createElement(
+							'tr',
+							{ key: idx },
+							/* @__PURE__ */ import_react.default.createElement(
+								'td',
+								null,
+								/* @__PURE__ */ import_react.default.createElement(
+									'input',
+									{
+										type: 'text',
+										list: 'common-mime-types',
+										value: entry.type,
+										placeholder: 'text/plain',
+										onChange: e =>
+											update(idx, {
+												type: e.target.value
+											})
+									}
+								)
+							),
+							/* @__PURE__ */ import_react.default.createElement(
+								'td',
+								{ className: 'cb-web-cell' },
+								/* @__PURE__ */ import_react.default.createElement(
+									'label',
+									null,
+									/* @__PURE__ */ import_react.default.createElement(
+										'input',
+										{
+											type: 'checkbox',
+											checked: !!entry.web,
+											onChange: e =>
+												update(idx, {
+													web: e.target.checked
+												})
+										}
+									),
+									' ',
+									entry.web
+										? /* @__PURE__ */ import_react.default.createElement(
+												'code',
+												null,
+												'web ',
+												entry.type.trim()
+										  )
+										: 'standard'
+								)
+							),
+							/* @__PURE__ */ import_react.default.createElement(
+								'td',
+								null,
+								/* @__PURE__ */ import_react.default.createElement(
+									'textarea',
+									{
+										className: 'cb-editor-data',
+										rows: 3,
+										value: entry.data,
+										onChange: e =>
+											update(idx, {
+												data: e.target.value
+											})
+									}
+								)
+							),
+							/* @__PURE__ */ import_react.default.createElement(
+								'td',
+								null,
+								/* @__PURE__ */ import_react.default.createElement(
+									'button',
+									{
+										type: 'button',
+										onClick: e => remove(idx),
+										disabled: entries.length === 1
+									},
+									'\u2715'
+								)
+							)
+						)
+					)
+				)
+			),
+			/* @__PURE__ */ import_react.default.createElement(
+				'p',
+				null,
+				/* @__PURE__ */ import_react.default.createElement(
+					'button',
+					{ type: 'button', onClick: add },
+					'+ Add type'
+				),
+				' ',
+				/* @__PURE__ */ import_react.default.createElement(
+					'button',
+					{ type: 'button', onClick: write, disabled: !can_write },
+					'Write to clipboard'
+				),
+				!can_write &&
+					/* @__PURE__ */ import_react.default.createElement(
+						'span',
+						{ className: 'anno' },
+						"This browser doesn't support",
+						' ',
+						/* @__PURE__ */ import_react.default.createElement(
+							'code',
+							null,
+							'navigator.clipboard.write()'
+						),
+						'.'
+					)
+			),
+			status &&
+				/* @__PURE__ */ import_react.default.createElement(
+					'p',
+					{ className: status.ok ? 'editor-ok' : 'editor-err' },
+					status.msg
+				)
 		);
 	}
-	render();
-	document.addEventListener('paste', e => {
-		render(e.clipboardData, 'clipboardData');
-	});
-	document.addEventListener('dragover', e => {
-		e.preventDefault();
-	});
-	document.addEventListener('drop', e => {
-		render(e.dataTransfer, 'dataTransfer');
-		e.preventDefault();
-	});
+	function App() {
+		const [data, setData] = (0, import_react.useState)([]);
+		const [label, setLabel] = (0, import_react.useState)(null);
+		const [entries, setEntries] = (0, import_react.useState)([
+			{ type: 'text/plain', data: '', web: false }
+		]);
+		const show = (0, import_react.useCallback)(async (payload, lbl) => {
+			const extracted = payload
+				? await Promise.all(
+						(Array.isArray(payload) ? payload : [payload]).map(
+							extractData
+						)
+				  )
+				: [];
+			setData(extracted);
+			setLabel(lbl);
+		}, []);
+		const readClipboard = (0, import_react.useCallback)(() => {
+			navigator.clipboard.read().then(items => {
+				show(items, 'ClipboardItems');
+			});
+		}, [show]);
+		const loadIntoEditor = (0, import_react.useCallback)(types => {
+			setEntries(
+				types.length
+					? types.map(t => ({
+							type: t.type,
+							data: t.data,
+							web: false
+					  }))
+					: [{ type: 'text/plain', data: '', web: false }]
+			);
+			document
+				.querySelector('.clipboard-editor')
+				?.scrollIntoView({ behavior: 'smooth' });
+		}, []);
+		const clear = (0, import_react.useCallback)(() => {
+			setData([]);
+			setLabel(null);
+		}, []);
+		(0, import_react.useEffect)(() => {
+			const on_paste = e => show(e.clipboardData, 'clipboardData');
+			const on_dragover = e => e.preventDefault();
+			const on_drop = e => {
+				show(e.dataTransfer, 'dataTransfer');
+				e.preventDefault();
+			};
+			document.addEventListener('paste', on_paste);
+			document.addEventListener('dragover', on_dragover);
+			document.addEventListener('drop', on_drop);
+			return () => {
+				document.removeEventListener('paste', on_paste);
+				document.removeEventListener('dragover', on_dragover);
+				document.removeEventListener('drop', on_drop);
+			};
+		}, [show]);
+		return /* @__PURE__ */ import_react.default.createElement(
+			'div',
+			null,
+			/* @__PURE__ */ import_react.default.createElement(
+				ClipboardInspector,
+				{
+					data,
+					label,
+					onReadClipboard: readClipboard,
+					onEdit: loadIntoEditor,
+					onClear: clear
+				}
+			),
+			/* @__PURE__ */ import_react.default.createElement(
+				ClipboardEditor,
+				{ entries, setEntries }
+			)
+		);
+	}
+	import_react_dom.default.render(
+		/* @__PURE__ */ import_react.default.createElement(App, null),
+		document.getElementById('app')
+	);
 })();
 /*! Bundled license information:
 
